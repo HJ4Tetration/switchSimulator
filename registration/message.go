@@ -16,6 +16,9 @@ type ServerMessage struct {
 	// Data: ignore data field, use more specific structs if Data is needed
 }
 
+type SwitchConfigMessage struct {
+}
+
 type SwitchCheckInMessage struct {
 	Cmd      string `json:"cmd"`
 	SwitchID string `json:"switchId"`
