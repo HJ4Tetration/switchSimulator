@@ -33,6 +33,11 @@ func (gateway *gateWay) getGatewayWebsocketIP() string {
 	return gateway.IP
 }
 
+type channelMessage struct {
+	message interface{}
+	cmd     string
+}
+
 func NewSwitchWebHandler(gateway *gateWay, switchName string) *switchWebHandler {
 	httpClient := &http.Client{
 		Transport: &http.Transport{
@@ -56,6 +61,71 @@ func NewSwitchWebHandler(gateway *gateWay, switchName string) *switchWebHandler 
 	}
 }
 
+func (s *switchWebHandler) sender(conn *websocket.Conn, toSender chan channelMessage, senderToValidator chan channelMessage, allToMainLoop chan bool) {
+	for {
+		m := <-toSender
+		jsonMessage, err := json.Marshal(m.message)
+		if err != nil {
+			glog.Errorf(s.switchName+": Can't marshal "+m.cmd+" message: %v\n", err)
+			//todo: send websocket.Close() message to gateway before conn.Close()
+			allToMainLoop <- true
+			break
+		}
+		conn.WriteMessage(websocket.BinaryMessage, jsonMessage)
+		glog.Infof(s.switchName + ": " + m.cmd + " message sent\n")
+		switch m.cmd {
+		case "switch/check_in":
+			senderToValidator <- m
+		case "switch/config_msg":
+			senderToValidator <- m
+		case "switch/add_mapping":
+			senderToValidator <- m
+		default: //todo: add other response to server's command
+		}
+	}
+}
+
+func (s *switchWebHandler) receiver(conn *websocket.Conn, receiverToValidator chan channelMessage, allToMainLoop chan bool) {
+	for {
+		messageType, message, err := conn.ReadMessage()
+		if err != nil {
+			if messageType == websocket.CloseMessage {
+				glog.Infof(s.switchName + ": websocket.Close() message received, close webocket gracefully\n")
+				allToMainLoop <- true
+				break
+			} else {
+				glog.Errorf(s.switchName+": Can't read websocket message: %v\n", err)
+				//todo: send websocket.Close() message to gateway before conn.Close()
+				allToMainLoop <- true
+				break
+			}
+		}
+		var serverMessage ServerMessage //for the cmd value
+		err = json.Unmarshal(message, &serverMessage)
+		if err != nil {
+			glog.Errorf(s.switchName+": Can't unmarshal websocket message: %v\n", err)
+			allToMainLoop <- true //todo: send websocket.Close() message to gateway before conn.CLose()
+			break
+		}
+		switch serverMessage.Cmd {
+		case "switch/check_in":
+			channelMessage := channelMessage{serverMessage, serverMessage.Cmd}
+			receiverToValidator <- channelMessage
+		case "switch/config_msg":
+			channelMessage := channelMessage{serverMessage, serverMessage.Cmd}
+			receiverToValidator <- channelMessage
+		case "switch/add_mapping":
+			channelMessage := channelMessage{serverMessage, serverMessage.Cmd}
+			receiverToValidator <- channelMessage
+		default: //todo: add other server's command --> generate response -->forward to sender
+		}
+		glog.Infof(s.switchName + ": switchCheckInMessage OK response received\n")
+	}
+}
+
+func (s *switchWebHandler) validator(senderToValidator chan channelMessage, receiverToValidator chan channelMessage, allToMainLoop chan bool) {
+}
+
 func (s *switchWebHandler) WebSocketRequest() bool { //return false if websocket creation fails
 	conn, _, err := s.websocketDialer.Dial(s.gatewayWssURL.String(), nil)
 	if err != nil {
@@ -64,62 +134,16 @@ func (s *switchWebHandler) WebSocketRequest() bool { //return false if websocket
 	}
 	glog.Infof(s.switchName + ": Websocket established\n")
 	//conn.SetReadDeadline(time.Now().Add(time.Minute))
-	//c := make(chan []byte, 10)
 
-	/*go func(chan []byte) {
-		for {
-			messageType, message, err := conn.ReadMessage()
-			if messageType == websocket.CloseMessage {
-				c <- message
-				break
-			}
-		}
-	}(c)*/
-	var switchCheckInMessage SwitchCheckInMessage //todo: add getCheckInMessage()
-	jsonSwitchCheckInMessage, err := json.Marshal(switchCheckInMessage)
-	if err != nil {
-		glog.Errorf(s.switchName+": Can't marshal switchCheckInMessage: %v\n", err)
-		defer conn.Close() //todo: send websocket.Close() message to gateway before conn.CLose()
-		return false
-	}
-	conn.WriteMessage(websocket.BinaryMessage, jsonSwitchCheckInMessage)
-	glog.Infof(s.switchName + ": switchCheckInMessage sent\n")
+	toSender := make(chan channelMessage, 10)
+	//toReceiver := make(chan channelMessage, 10)
+	senderToValidator := make(chan channelMessage, 10)
+	receiverToValidator := make(chan channelMessage, 10)
+	allToMainLoop := make(chan bool, 10)
 
-	conn.SetReadDeadline(time.Now().Add(time.Minute))
-	messageType, message, err := conn.ReadMessage()
-	if err != nil {
-		defer conn.Close() //todo: send websocket.Close() message to gateway before conn.CLose()
-		if messageType == websocket.CloseMessage {
-			glog.Infof(s.switchName + ": websocket.Close() message received, close webocket gracefully\n")
-			return false
-		} else {
-			glog.Errorf(s.switchName+": Can't read websocket message: %v\n", err)
-			return false
-		}
-	}
-	var jsonMessage ServerMessage
-	err = json.Unmarshal(message, &jsonMessage)
-	if err != nil {
-		glog.Errorf(s.switchName+": Can't unmarshal websocket message: %v\n", err)
-		defer conn.Close() //todo: send websocket.Close() message to gateway before conn.CLose()
-		return false
-	}
-	if jsonMessage.Cmd != switchCheckInMessage.Cmd {
-		glog.Infof(s.switchName + ": Can't get OK response for SwitchCheckInMessage: %v\n")
-		defer conn.Close() //todo: send websocket.Close() message to gateway before conn.CLose()
-		return false
-	}
-	glog.Infof(s.switchName + ": switchCheckInMessage OK response received\n")
-
-	var switchConfigMessage SwitchConfigMessage //todo: add getConfigMessage()
-	jsonSwitchConfigMessage, err := json.Marshal(switchConfigMessage)
-	if err != nil {
-		glog.Errorf(s.switchName+": Can't marshal switchConfigMessage: %v\n", err)
-		defer conn.Close() //todo: send websocket.Close() message to gateway before conn.CLose()
-		return false
-	}
-	conn.WriteMessage(websocket.BinaryMessage, jsonSwitchConfigMessage)
-	glog.Infof(s.switchName + ": switchConfigMessage sent\n")
+	go s.sender(conn, toSender, senderToValidator, allToMainLoop)
+	go s.receiver(conn, receiverToValidator, allToMainLoop)
+	go s.validator(senderToValidator, receiverToValidator, allToMainLoop)
 
 	return true
 }
