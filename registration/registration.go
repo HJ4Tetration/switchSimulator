@@ -35,8 +35,8 @@ func (gateway *gateWay) getGatewayWebsocketIP() string {
 }
 
 type channelMessage struct {
-	message interface{}
-	cmd     string
+	Cmd     string
+	Message []byte
 }
 
 func NewSwitchWebHandler(gateway *gateWay, switchName string) *switchWebHandler {
@@ -65,16 +65,10 @@ func NewSwitchWebHandler(gateway *gateWay, switchName string) *switchWebHandler 
 func (s *switchWebHandler) sender(conn *websocket.Conn, toSender chan channelMessage, senderToValidator chan string, allToMainLoop chan string) {
 	for {
 		m := <-toSender
-		jsonMessage, err := json.Marshal(m.message)
-		if err != nil {
-			glog.Errorf(s.switchName+": Can't marshal "+m.cmd+" message: %v\n", err)
-			//todo: send websocket.Close() message to gateway before conn.Close()
-			allToMainLoop <- s.switchName
-			return
-		}
-		conn.WriteMessage(websocket.BinaryMessage, jsonMessage)
-		glog.Infof(s.switchName + ": " + m.cmd + " message sent\n")
-		switch m.cmd {
+		conn.WriteMessage(websocket.BinaryMessage, m.Message)
+
+		glog.Infof(s.switchName + ": " + m.Cmd + " message sent\n")
+		switch m.Cmd {
 		case "switch/check_in":
 			senderToValidator <- m.cmd
 		case "switch/config_msg":
@@ -164,6 +158,16 @@ func (s *switchWebHandler) validator(senderToValidator chan string, receiverToVa
 	}
 }
 
+func (s *switchWebHandler) marshalMessage(cmd string, message interface{}) ([]byte, bool) {
+	jsonMessage, err := json.Marshal(message)
+	if err != nil {
+		glog.Errorf(s.switchName+": Can't marshal "+cmd+" message: %v\n", err)
+		return nil, false
+	} else {
+		return jsonMessage, true
+	}
+}
+
 func (s *switchWebHandler) WebSocketRequest(allToMainLoop chan string) bool { //return false if websocket creation fails
 	conn, _, err := s.websocketDialer.Dial(s.gatewayWssURL.String(), nil)
 	if err != nil {
@@ -180,6 +184,32 @@ func (s *switchWebHandler) WebSocketRequest(allToMainLoop chan string) bool { //
 	go s.sender(conn, toSender, senderToValidator, allToMainLoop)
 	go s.receiver(conn, receiverToValidator, allToMainLoop)
 	go s.validator(senderToValidator, receiverToValidator, allToMainLoop)
+
+	checkInMessage := s.getCheckInMessage()
+	cmd := "switch/check_in"
+	jsonCheckInMessage, flag := s.marshalMessage(cmd, checkInMessage)
+	if !flag {
+		glog.Infof(s.switchName + ": closing websocket\n")
+		defer conn.Close()
+		allToMainLoop <- s.switchName
+		return false
+	}
+	message := channelMessage{cmd, jsonCheckInMessage}
+	glog.Infof(s.switchName + ": forwarding " + cmd + " message to sender\n")
+	toSender <- message
+
+	configMessage := s.getConfigMessage()
+	cmd = "switch/config_msg"
+	jsonConfigMessage, flag := s.marshalMessage(cmd, configMessage)
+	if !flag {
+		glog.Infof(s.switchName + ": closing websocket\n")
+		defer conn.Close()
+		allToMainLoop <- s.switchName
+		return false
+	}
+	message = channelMessage{cmd, jsonConfigMessage}
+	glog.Infof(s.switchName + ": forwarding " + cmd + " message to sender\n")
+	toSender <- message
 
 	return true
 }
