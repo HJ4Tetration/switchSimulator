@@ -1,4 +1,4 @@
-package registration
+package main
 
 type SwitchRegistration struct {
 	Serial string `json:"serial"`
@@ -17,6 +17,12 @@ type ServerMessage struct {
 }
 
 type SwitchConfigMessage struct {
+	Cmd      string `json:"cmd"`
+	SwitchID string `json:"switchId"`
+	Data     struct {
+		HwSensorNames []string `json:"hwSensorNames"`
+		SlotCount     int      `json:"slotCount"`
+	} `json:"data"`
 }
 
 type SwitchCheckInMessage struct {

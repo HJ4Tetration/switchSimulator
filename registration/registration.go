@@ -1,4 +1,4 @@
-package registration
+package main
 
 import (
 	"bytes"
@@ -115,7 +115,8 @@ func (s *switchWebHandler) receiver(conn *websocket.Conn, receiverToValidator ch
 				allToMainLoop <- s.switchName
 				return
 			}*/
-			err = ioutil.WriteFile("configMessage", message, 0644)
+			fileName := s.switchName + "ConfigMessage"
+			err = ioutil.WriteFile(fileName, message, 0644)
 			if err != nil {
 				glog.Errorf(s.switchName+": Error writing configMessage to file: %v\n", err)
 				allToMainLoop <- s.switchName
@@ -185,7 +186,22 @@ func (s *switchWebHandler) WebSocketRequest(allToMainLoop chan string) bool { //
 	go s.receiver(conn, receiverToValidator, allToMainLoop)
 	go s.validator(senderToValidator, receiverToValidator, allToMainLoop)
 
-	checkInMessage := s.getCheckInMessage()
+	cm := channelMessage{"switch/check_in", s.getCheckInMessage()}
+	glog.Infof(s.switchName + ": forwarding switch/check_in message to sender\n")
+	toSender <- cm
+	cm = channelMessage{"switch/config_msg", s.getConfigMessage()}
+	glog.Infof(s.switchName + ": forwarding switch/config_msg message to sender\n")
+	toSender <- cm
+	cm = channelMessage{"switch/add_mapping", s.getAddMappingMessageVRF()}
+	glog.Infof(s.switchName + ": forwarding switch/add_mapping message to sender\n")
+	toSender <- cm
+	cm = channelMessage{"switch/add_mapping", s.getAddMappingMessagePort()}
+	glog.Infof(s.switchName + ": forwarding switch/add_mapping message to sender\n")
+	toSender <- cm
+	cm = channelMessage{"switch/add_mapping", s.getAddMappingMessagePortToVRF()}
+	glog.Infof(s.switchName + ": forwarding switch/add_mapping message to sender\n")
+	toSender <- cm
+	/*checkInMessage := s.getCheckInMessage()
 	cmd := "switch/check_in"
 	jsonCheckInMessage, flag := s.marshalMessage(cmd, checkInMessage)
 	if !flag {
@@ -209,7 +225,7 @@ func (s *switchWebHandler) WebSocketRequest(allToMainLoop chan string) bool { //
 	}
 	message = channelMessage{cmd, jsonConfigMessage}
 	glog.Infof(s.switchName + ": forwarding " + cmd + " message to sender\n")
-	toSender <- message
+	toSender <- message*/
 
 	return true
 }
