@@ -70,11 +70,11 @@ func (s *switchWebHandler) sender(conn *websocket.Conn, toSender chan channelMes
 		glog.Infof(s.switchName + ": " + m.Cmd + " message sent\n")
 		switch m.Cmd {
 		case "switch/check_in":
-			senderToValidator <- m.cmd
+			senderToValidator <- m.Cmd
 		case "switch/config_msg":
-			senderToValidator <- m.cmd
+			senderToValidator <- m.Cmd
 		case "switch/add_mapping":
-			senderToValidator <- m.cmd
+			senderToValidator <- m.Cmd
 		default: //todo: add other response to server's command
 		}
 	}
